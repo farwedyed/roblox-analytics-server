@@ -1,4 +1,4 @@
-// api/index.js - The Final Backend v1.1 (Corrected Data Handling)
+// api/index.js - The Final Backend v1.2 (Corrected Delete Logic)
 
 // 1. SETUP
 const express = require("express");
@@ -18,19 +18,14 @@ const DB_KEY = "chatlogs";
 // ENDPOINT 1: RECEIVE DATA FROM ROBLOX
 app.post("/api/log-match", async (request, response) => {
   try {
-    const newData = request.body; // This is already a clean JavaScript object
+    const newData = request.body;
     console.log("Received new log from Roblox:", newData.timestamp);
     if (!newData.matchLog || newData.matchLog.length === 0) {
       return response.status(400).json({ error: "Invalid log data" });
     }
     newData.id = Date.now();
-
-    // [[ THE FIX: Save the object directly. @vercel/kv will handle stringifying. ]]
     await kv.lpush(DB_KEY, newData);
-    
-    // Keep the list trimmed to the most recent 200 logs.
     await kv.ltrim(DB_KEY, 0, 199);
-
     response.status(200).json({ status: "success" });
   } catch (error) {
     console.error("Failed to process log:", error);
@@ -41,7 +36,6 @@ app.post("/api/log-match", async (request, response) => {
 // ENDPOINT 2: PROVIDE DATA TO THE WEBSITE
 app.get("/api/get-logs", async (request, response) => {
   try {
-    // [[ THE FIX: The database now returns clean objects directly. No need for JSON.parse. ]]
     const logs = await kv.lrange(DB_KEY, 0, -1);
     response.json(logs);
   } catch (error) {
@@ -60,18 +54,18 @@ app.delete("/api/delete-log/:id", async (request, response) => {
       return response.status(401).json({ error: "Unauthorized" });
     }
     
-    // Get all logs from the database
-    const logs = await kv.lrange(DB_KEY, 0, -1);
+    const logStrings = await kv.lrange(DB_KEY, 0, -1);
+    const logs = logStrings.map(str => JSON.parse(JSON.stringify(str))); // Safely parse
 
-    // Find the specific log object to delete
-    const logToDelete = logs.find(log => log.id === logIdToDelete);
+    // Find the STRING representation of the log to delete
+    const stringToDelete = logs.find(log => log.id === logIdToDelete);
     
-    if (!logToDelete) {
+    if (!stringToDelete) {
         return response.status(404).json({ error: "Log not found." });
     }
 
-    // [[ THE FIX: Tell the database to remove the matching object. ]]
-    await kv.lrem(DB_KEY, 1, logToDelete);
+    // [[ THE FIX: Use the original string object to remove it. ]]
+    await kv.lrem(DB_KEY, 1, stringToDelete);
 
     console.log(`Successfully deleted log ID: ${logIdToDelete}`);
     response.status(200).json({ status: "success", message: "Log deleted." });
@@ -81,5 +75,4 @@ app.delete("/api/delete-log/:id", async (request, response) => {
   }
 });
 
-// This allows Vercel to handle the server
 module.exports = app;
